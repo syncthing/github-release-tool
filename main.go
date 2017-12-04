@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,6 +29,8 @@ func main() {
 	var repo, owner string
 	var since, to string
 	var skipLabels []string
+	var markdownLinks bool
+	var milestone string
 
 	kingpin.Flag("owner", "Owner name (or set GRT_OWNER)").Envar("GRT_OWNER").Required().StringVar(&owner)
 	kingpin.Flag("repo", "Repository name (or set GRT_REPO)").Envar("GRT_REPO").Required().StringVar(&repo)
@@ -36,15 +40,16 @@ func main() {
 	cmdMilestone.Flag("from", "Start tag/commit").PlaceHolder("TAG/COMMIT").Required().StringVar(&since)
 	cmdMilestone.Flag("to", "End tag/commit").Default("HEAD").StringVar(&to)
 	cmdMilestone.Flag("skip-label", "Issue labels to skip").PlaceHolder("LABEL").Envar("GRT_SKIPLABELS").StringsVar(&skipLabels)
-	argMilestoneMilestone := cmdMilestone.Arg("milestone", "The milestone name").Required().String()
+	cmdMilestone.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
 
 	cmdChangelog := kingpin.Command("changelog", "Show changelog for milestone")
-	argChangelogMilestone := cmdChangelog.Arg("milestone", "The milestone name").String()
+	cmdChangelog.Flag("md", "Markdown links").BoolVar(&markdownLinks)
+	cmdChangelog.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
 
 	cmdRelease := kingpin.Command("release", "Create release from milestone")
 	cmdRelease.Flag("dry-run", "Don't do it, just report what would be done").BoolVar(&dryRun)
-	cmdRelease.Flag("to", "Release name/version (default is milestone name)").PlaceHolder("NAME").String()
-	argReleaseMilestone := cmdRelease.Arg("milestone", "The milestone name").Required().String()
+	cmdRelease.Flag("to", "Release name/version (default is milestone name)").PlaceHolder("NAME").StringVar(&to)
+	cmdRelease.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
 
 	cmd := kingpin.Parse()
 
@@ -59,45 +64,44 @@ func main() {
 	// Engage!
 	switch cmd {
 	case cmdMilestone.FullCommand():
-		milestone(client, owner, repo, since, to, *argMilestoneMilestone, skipLabels)
+		createMilestone(ctx, client, owner, repo, since, to, milestone, skipLabels)
 
 	case cmdChangelog.FullCommand():
-		changelog(os.Stdout, client, owner, repo, *argChangelogMilestone)
+		changelog(ctx, os.Stdout, client, owner, repo, milestone, markdownLinks)
 
 	case cmdRelease.FullCommand():
-		_ = argReleaseMilestone
+		buf := new(bytes.Buffer)
+		changelog(ctx, buf, client, owner, repo, milestone, false)
+
+		releaseName := milestone
+		close := true
+		pre := false
+		if to != "" {
+			releaseName = to
+			close = false
+			pre = true
+		}
+		createRelease(ctx, client, owner, repo, releaseName, close, pre, buf.String())
 	}
 }
 
-func milestone(client *github.Client, owner, repo, since, to, milestone string, skipLabels []string) {
-	ctx := context.Background()
-	stones, _, err := client.Issues.ListMilestones(ctx, owner, repo, &github.MilestoneListOptions{State: "all"})
+func createMilestone(ctx context.Context, client *github.Client, owner, repo, since, to, milestone string, skipLabels []string) {
+	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
-		log.Println("Listing milestones:", err)
-		os.Exit(1)
-	}
-	var stone *github.Milestone
-	for _, stone = range stones {
-		if stone.GetTitle() == milestone {
-			log.Println("Found existing milestone")
-			goto done
+		log.Println("Creating milestone", milestone)
+		if !dryRun {
+			stone = &github.Milestone{
+				Title: github.String(milestone),
+			}
+			stone, _, err = client.Issues.CreateMilestone(ctx, owner, repo, stone)
+			if err != nil {
+				log.Println("Creating milestone:", err)
+				os.Exit(1)
+			}
 		}
 	}
 
-	log.Println("Creating milestone", milestone)
-	if !dryRun {
-		stone = &github.Milestone{
-			Title: github.String(milestone),
-		}
-		stone, _, err = client.Issues.CreateMilestone(ctx, owner, repo, stone)
-		if err != nil {
-			log.Println("Creating milestone:", err)
-			os.Exit(1)
-		}
-	}
-
-done:
-	commits, err := listCommits(client, owner, repo, since, to)
+	commits, err := listCommits(ctx, client, owner, repo, since, to)
 	if err != nil {
 		log.Println("Listing commits:", err)
 		os.Exit(1)
@@ -142,26 +146,13 @@ nextIssue:
 	}
 }
 
-func changelog(w io.Writer, client *github.Client, owner, repo, milestone string) {
-	ctx := context.Background()
-
-	stones, _, err := client.Issues.ListMilestones(ctx, owner, repo, &github.MilestoneListOptions{State: "all"})
+func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, repo, milestone string, markdownLinks bool) {
+	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
-		log.Println("Listing milestones:", err)
+		log.Println("Getting milestone:", err)
 		os.Exit(1)
 	}
 
-	var stone *github.Milestone
-	for _, stone = range stones {
-		if stone.GetTitle() == milestone {
-			goto done
-		}
-	}
-
-	log.Println("Milestone not found")
-	os.Exit(1)
-
-done:
 	issues, _, err := client.Issues.ListByRepo(ctx, owner, repo, &github.IssueListByRepoOptions{
 		Milestone: strconv.Itoa(stone.GetNumber()),
 		State:     "all",
@@ -175,39 +166,57 @@ done:
 		return issues[a].GetNumber() < issues[b].GetNumber()
 	})
 
-	var bugs, features, other []*github.Issue
+	var bugs, enhancements, other []*github.Issue
 	for _, issue := range issues {
 		labels := labels(issue)
 		switch {
 		case contains("bug", labels):
 			bugs = append(bugs, issue)
 		case contains("enhancement", labels):
-			features = append(features, issue)
+			enhancements = append(enhancements, issue)
 		default:
 			other = append(other, issue)
 		}
 	}
 
 	if len(bugs) > 0 {
-		fmt.Fprintf(w, "Bugs:\n\n")
-		printIssues(w, bugs)
+		fmt.Fprintf(w, "Bugfixes:\n\n")
+		printIssues(w, bugs, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
-	if len(features) > 0 {
+	if len(enhancements) > 0 {
 		fmt.Fprintf(w, "Enhancements:\n\n")
-		printIssues(w, features)
+		printIssues(w, enhancements, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
 	if len(other) > 0 {
-		fmt.Fprintf(w, "Other:\n\n")
-		printIssues(w, other)
+		fmt.Fprintf(w, "Other issues:\n\n")
+		printIssues(w, other, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
 }
 
-func printIssues(w io.Writer, issues []*github.Issue) {
+func createRelease(ctx context.Context, client *github.Client, owner, repo, name string, close, pre bool, changelog string) {
+	rel := &github.RepositoryRelease{
+		Name:       github.String(name),
+		TagName:    github.String(name),
+		Body:       github.String(changelog),
+		Prerelease: github.Bool(pre),
+		Draft:      github.Bool(false),
+	}
+	if _, _, err := client.Repositories.CreateRelease(ctx, owner, repo, rel); err != nil {
+		log.Println("Creating release:", err)
+		os.Exit(1)
+	}
+}
+
+func printIssues(w io.Writer, issues []*github.Issue, markdownLinks bool) {
 	for _, issue := range issues {
-		fmt.Fprintf(w, " - #%d: %s\n", issue.GetNumber(), issue.GetTitle())
+		if markdownLinks {
+			fmt.Fprintf(w, " - [#%d](%s): %s\n", issue.GetNumber(), issue.GetHTMLURL(), issue.GetTitle())
+		} else {
+			fmt.Fprintf(w, " - #%d: %s\n", issue.GetNumber(), issue.GetTitle())
+		}
 	}
 }
 
@@ -229,33 +238,7 @@ func contains(s string, ss []string) bool {
 	return false
 }
 
-func nextMilestone(client *github.Client, owner, repo string) (string, error) {
-	ctx := context.Background()
-	stones, _, err := client.Issues.ListMilestones(ctx, owner, repo, nil)
-	if err != nil {
-		return "", err
-	}
-	for _, stone := range stones {
-		if stone.GetState() != "open" {
-			continue
-		}
-		fmt.Println(stone.GetTitle())
-	}
-
-	return "", nil
-}
-
-func lastRelease(client *github.Client, owner, repo string) (string, error) {
-	ctx := context.Background()
-	rel, _, err := client.Repositories.GetLatestRelease(ctx, owner, repo)
-	if err != nil {
-		return "", err
-	}
-	return rel.GetTagName(), nil
-}
-
-func listCommits(client *github.Client, owner, repo, since, to string) ([]github.RepositoryCommit, error) {
-	ctx := context.Background()
+func listCommits(ctx context.Context, client *github.Client, owner, repo, since, to string) ([]github.RepositoryCommit, error) {
 	commits, _, err := client.Repositories.CompareCommits(ctx, owner, repo, since, to)
 	if err != nil {
 		return nil, err
@@ -283,4 +266,20 @@ func getFixes(commits []github.RepositoryCommit) []int {
 	}
 	sort.Ints(fixes)
 	return fixes
+}
+
+func getMilestone(ctx context.Context, client *github.Client, owner, repo, name string) (*github.Milestone, error) {
+	stones, _, err := client.Issues.ListMilestones(ctx, owner, repo, &github.MilestoneListOptions{State: "all"})
+	if err != nil {
+		return nil, err
+	}
+
+	var stone *github.Milestone
+	for _, stone = range stones {
+		if stone.GetTitle() == name {
+			return stone, nil
+		}
+	}
+
+	return nil, errors.New("not found")
 }
