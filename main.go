@@ -197,6 +197,12 @@ func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, r
 }
 
 func createRelease(ctx context.Context, client *github.Client, owner, repo, name string, close, pre bool, changelog string) {
+	stone, err := getMilestone(ctx, client, owner, repo, name)
+	if err != nil {
+		log.Println("Getting milestone:", err)
+		os.Exit(1)
+	}
+
 	rel := &github.RepositoryRelease{
 		Name:       github.String(name),
 		TagName:    github.String(name),
@@ -207,6 +213,16 @@ func createRelease(ctx context.Context, client *github.Client, owner, repo, name
 	if _, _, err := client.Repositories.CreateRelease(ctx, owner, repo, rel); err != nil {
 		log.Println("Creating release:", err)
 		os.Exit(1)
+	}
+
+	if close {
+		_, _, err := client.Issues.EditMilestone(ctx, owner, repo, stone.GetNumber(), &github.Milestone{
+			State: github.String("closed"),
+		})
+		if err != nil {
+			fmt.Println("Closing milestone:", err)
+			os.Exit(1)
+		}
 	}
 }
 
