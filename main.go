@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"regexp"
 	"sort"
 	"strconv"
 
 	"github.com/alecthomas/kingpin"
-
 	"github.com/google/go-github/github"
 	"golang.org/x/oauth2"
 )
@@ -53,12 +53,12 @@ func main() {
 
 	cmd := kingpin.Parse()
 
-	// Initialize a client.
+	// Initialize a client, with or without authentication.
 	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: os.Getenv("GITHUB_TOKEN")},
-	)
-	tc := oauth2.NewClient(ctx, ts)
+	var tc *http.Client
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		tc = oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
+	}
 	client := github.NewClient(tc)
 
 	// Engage!
