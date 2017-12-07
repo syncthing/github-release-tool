@@ -81,7 +81,7 @@ func main() {
 			close = false
 			pre = true
 		}
-		createRelease(ctx, client, owner, repo, releaseName, close, pre, buf.String())
+		createRelease(ctx, client, owner, repo, milestone, releaseName, close, pre, buf.String())
 	}
 }
 
@@ -196,8 +196,8 @@ func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, r
 	}
 }
 
-func createRelease(ctx context.Context, client *github.Client, owner, repo, name string, close, pre bool, changelog string) {
-	stone, err := getMilestone(ctx, client, owner, repo, name)
+func createRelease(ctx context.Context, client *github.Client, owner, repo, milestone, name string, close, pre bool, changelog string) {
+	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
 		log.Println("Getting milestone:", err)
 		os.Exit(1)
