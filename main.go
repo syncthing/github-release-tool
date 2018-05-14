@@ -31,6 +31,7 @@ func main() {
 	var skipLabels []string
 	var markdownLinks bool
 	var milestone string
+	var forceMilestone bool
 
 	kingpin.Flag("owner", "Owner name (or set GRT_OWNER)").Envar("GRT_OWNER").Required().StringVar(&owner)
 	kingpin.Flag("repo", "Repository name (or set GRT_REPO)").Envar("GRT_REPO").Required().StringVar(&repo)
@@ -40,6 +41,7 @@ func main() {
 	cmdMilestone.Flag("from", "Start tag/commit").PlaceHolder("TAG/COMMIT").Required().StringVar(&since)
 	cmdMilestone.Flag("to", "End tag/commit").Default("HEAD").StringVar(&to)
 	cmdMilestone.Flag("skip-label", "Issue labels to skip").PlaceHolder("LABEL").Envar("GRT_SKIPLABELS").StringsVar(&skipLabels)
+	cmdMilestone.Flag("force", "Overwrite milestone on already milestoned issues").BoolVar(&forceMilestone)
 	cmdMilestone.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
 
 	cmdChangelog := kingpin.Command("changelog", "Show changelog for milestone")
@@ -64,7 +66,7 @@ func main() {
 	// Engage!
 	switch cmd {
 	case cmdMilestone.FullCommand():
-		createMilestone(ctx, client, owner, repo, since, to, milestone, skipLabels)
+		createMilestone(ctx, client, owner, repo, since, to, milestone, skipLabels, forceMilestone)
 
 	case cmdChangelog.FullCommand():
 		changelog(ctx, os.Stdout, client, owner, repo, milestone, markdownLinks)
@@ -85,7 +87,7 @@ func main() {
 	}
 }
 
-func createMilestone(ctx context.Context, client *github.Client, owner, repo, since, to, milestone string, skipLabels []string) {
+func createMilestone(ctx context.Context, client *github.Client, owner, repo, since, to, milestone string, skipLabels []string, force bool) {
 	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
 		log.Println("Creating milestone", milestone)
@@ -126,10 +128,15 @@ nextIssue:
 			}
 		}
 
-		if issue.Milestone != nil && issue.Milestone.GetNumber() == stone.GetNumber() {
-			// It's already correctly set
-			log.Println("Issue", fix, "is already correctly marked")
-			continue
+		if issue.Milestone != nil {
+			if issue.Milestone.GetNumber() == stone.GetNumber() {
+				// It's already correctly set
+				log.Println("Issue", fix, "is already correctly marked")
+				continue
+			} else if !force {
+				log.Println("Issue", fix, "is already marked with another milestone")
+				continue
+			}
 		}
 
 		// Set the issue milestone.
