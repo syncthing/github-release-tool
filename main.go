@@ -66,14 +66,14 @@ func main() {
 	// Engage!
 	switch cmd {
 	case cmdMilestone.FullCommand():
-		createMilestone(ctx, client, owner, repo, since, to, milestone, skipLabels, forceMilestone)
+		createMilestone(ctx, client, owner, repo, since, to, milestone, forceMilestone)
 
 	case cmdChangelog.FullCommand():
-		changelog(ctx, os.Stdout, client, owner, repo, milestone, markdownLinks)
+		changelog(ctx, os.Stdout, client, owner, repo, milestone, markdownLinks, skipLabels)
 
 	case cmdRelease.FullCommand():
 		buf := new(bytes.Buffer)
-		changelog(ctx, buf, client, owner, repo, milestone, false)
+		changelog(ctx, buf, client, owner, repo, milestone, false, skipLabels)
 
 		releaseName := milestone
 		close := true
@@ -87,7 +87,7 @@ func main() {
 	}
 }
 
-func createMilestone(ctx context.Context, client *github.Client, owner, repo, since, to, milestone string, skipLabels []string, force bool) {
+func createMilestone(ctx context.Context, client *github.Client, owner, repo, since, to, milestone string, force bool) {
 	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
 		log.Println("Creating milestone", milestone)
@@ -109,23 +109,11 @@ func createMilestone(ctx context.Context, client *github.Client, owner, repo, si
 		os.Exit(1)
 	}
 
-nextIssue:
 	for _, fix := range getFixes(commits) {
 		issue, _, err := client.Issues.Get(ctx, owner, repo, fix)
 		if err != nil {
 			log.Println("Getting issue:", err)
 			continue
-		}
-
-		if issue.IsPullRequest() {
-			continue nextIssue
-		}
-
-		labels := labels(issue)
-		for _, skip := range skipLabels {
-			if contains(skip, labels) {
-				continue nextIssue
-			}
 		}
 
 		if issue.Milestone != nil {
@@ -153,7 +141,7 @@ nextIssue:
 	}
 }
 
-func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, repo, milestone string, markdownLinks bool) {
+func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, repo, milestone string, markdownLinks bool, skipLabels []string) {
 	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
 		log.Println("Getting milestone:", err)
@@ -174,8 +162,19 @@ func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, r
 	})
 
 	var bugs, enhancements, other []*github.Issue
+nextIssue:
 	for _, issue := range issues {
+		if issue.IsPullRequest() {
+			continue
+		}
+
 		labels := labels(issue)
+		for _, skip := range skipLabels {
+			if contains(skip, labels) {
+				continue nextIssue
+			}
+		}
+
 		switch {
 		case contains("bug", labels):
 			bugs = append(bugs, issue)
@@ -271,12 +270,25 @@ func listCommits(ctx context.Context, client *github.Client, owner, repo, since,
 
 func getFixes(commits []github.RepositoryCommit) []int {
 	fixesRe := regexp.MustCompile(`fixes #(\d+)`)
+	pullReqRe := regexp.MustCompile(`\(#(\d+)\)$`)
 	var fixes []int
 	seen := make(map[int]struct{})
 	for _, commit := range commits {
 		matches := fixesRe.FindAllStringSubmatch(commit.Commit.GetMessage(), -1)
 		for _, m := range matches {
 			num, err := strconv.Atoi(m[1])
+			if err != nil {
+				continue // can't happen
+			}
+			if _, ok := seen[num]; ok {
+				continue
+			}
+			fixes = append(fixes, num)
+			seen[num] = struct{}{}
+		}
+		match := pullReqRe.FindStringSubmatch(commit.Commit.GetMessage())
+		if len(match) == 2 {
+			num, err := strconv.Atoi(match[1])
 			if err != nil {
 				continue // can't happen
 			}
