@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/alecthomas/kingpin"
 	"github.com/google/go-github/github"
@@ -274,7 +275,11 @@ func getFixes(commits []github.RepositoryCommit) []int {
 	var fixes []int
 	seen := make(map[int]struct{})
 	for _, commit := range commits {
-		matches := fixesRe.FindAllStringSubmatch(commit.Commit.GetMessage(), -1)
+		msg := commit.Commit.GetMessage()
+		lines := strings.Split(msg, "\n")
+		msg = lines[0]
+
+		matches := fixesRe.FindAllStringSubmatch(msg, -1)
 		for _, m := range matches {
 			num, err := strconv.Atoi(m[1])
 			if err != nil {
@@ -286,7 +291,8 @@ func getFixes(commits []github.RepositoryCommit) []int {
 			fixes = append(fixes, num)
 			seen[num] = struct{}{}
 		}
-		match := pullReqRe.FindStringSubmatch(commit.Commit.GetMessage())
+
+		match := pullReqRe.FindStringSubmatch(msg)
 		if len(match) == 2 {
 			num, err := strconv.Atoi(match[1])
 			if err != nil {
