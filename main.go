@@ -41,17 +41,18 @@ func main() {
 	cmdMilestone.Flag("dry-run", "Don't do it, just report what would be done").BoolVar(&dryRun)
 	cmdMilestone.Flag("from", "Start tag/commit").PlaceHolder("TAG/COMMIT").Required().StringVar(&since)
 	cmdMilestone.Flag("to", "End tag/commit").Default("HEAD").StringVar(&to)
-	cmdMilestone.Flag("skip-label", "Issue labels to skip").PlaceHolder("LABEL").Envar("GRT_SKIPLABELS").StringsVar(&skipLabels)
 	cmdMilestone.Flag("force", "Overwrite milestone on already milestoned issues").BoolVar(&forceMilestone)
 	cmdMilestone.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
 
 	cmdChangelog := kingpin.Command("changelog", "Show changelog for milestone")
 	cmdChangelog.Flag("md", "Markdown links").BoolVar(&markdownLinks)
+	cmdChangelog.Flag("skip-label", "Issue labels to skip").PlaceHolder("LABEL").Envar("GRT_SKIPLABELS").StringsVar(&skipLabels)
 	cmdChangelog.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
 
 	cmdRelease := kingpin.Command("release", "Create release from milestone")
 	cmdRelease.Flag("dry-run", "Don't do it, just report what would be done").BoolVar(&dryRun)
 	cmdRelease.Flag("to", "Release name/version (default is milestone name)").PlaceHolder("NAME").StringVar(&to)
+	cmdRelease.Flag("skip-label", "Issue labels to skip").PlaceHolder("LABEL").Envar("GRT_SKIPLABELS").StringsVar(&skipLabels)
 	cmdRelease.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
 
 	cmd := kingpin.Parse()
