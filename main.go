@@ -150,13 +150,22 @@ func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, r
 		os.Exit(1)
 	}
 
-	issues, _, err := client.Issues.ListByRepo(ctx, owner, repo, &github.IssueListByRepoOptions{
+	opts := &github.IssueListByRepoOptions{
 		Milestone: strconv.Itoa(stone.GetNumber()),
 		State:     "all",
-	})
-	if err != nil {
-		log.Println("Listing issues:", err)
-		os.Exit(1)
+	}
+	var issues []*github.Issue
+	for {
+		is, resp, err := client.Issues.ListByRepo(ctx, owner, repo, opts)
+		if err != nil {
+			log.Println("Listing issues:", err)
+			os.Exit(1)
+		}
+		issues = append(issues, is...)
+		if resp.NextPage <= opts.Page {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 
 	sort.Slice(issues, func(a, b int) bool {
@@ -311,16 +320,25 @@ func getFixes(commits []github.RepositoryCommit) []int {
 }
 
 func getMilestone(ctx context.Context, client *github.Client, owner, repo, name string) (*github.Milestone, error) {
-	stones, _, err := client.Issues.ListMilestones(ctx, owner, repo, &github.MilestoneListOptions{State: "all"})
-	if err != nil {
-		return nil, err
-	}
-
-	var stone *github.Milestone
-	for _, stone = range stones {
-		if stone.GetTitle() == name {
-			return stone, nil
+	opts := &github.MilestoneListOptions{State: "all"}
+	for {
+		stones, resp, err := client.Issues.ListMilestones(ctx, owner, repo, opts)
+		if err != nil {
+			return nil, err
 		}
+
+		var stone *github.Milestone
+		for _, stone = range stones {
+			if stone.GetTitle() == name {
+				return stone, nil
+			}
+		}
+
+		if resp.NextPage <= opts.Page {
+			break
+		}
+
+		opts.Page = resp.NextPage
 	}
 
 	return nil, errors.New("not found")
