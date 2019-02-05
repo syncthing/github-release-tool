@@ -196,18 +196,24 @@ nextIssue:
 		}
 	}
 
+	if markdownLinks {
+		fmt.Fprintf(w, "# [%s](https://github.com/%s/%s/releases/%s)\n\n", milestone, owner, repo, milestone)
+	} else {
+		fmt.Fprintf(w, "# %s\n\n", milestone)
+	}
+
 	if len(bugs) > 0 {
-		fmt.Fprintf(w, "Bugfixes:\n\n")
+		fmt.Fprintf(w, "## Bugfixes\n\n")
 		printIssues(w, bugs, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
 	if len(enhancements) > 0 {
-		fmt.Fprintf(w, "Enhancements:\n\n")
+		fmt.Fprintf(w, "## Enhancements\n\n")
 		printIssues(w, enhancements, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
 	if len(other) > 0 {
-		fmt.Fprintf(w, "Other issues:\n\n")
+		fmt.Fprintf(w, "## Other issues\n\n")
 		printIssues(w, other, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
