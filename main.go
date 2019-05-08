@@ -118,6 +118,10 @@ func createMilestone(ctx context.Context, client *github.Client, owner, repo, si
 			continue
 		}
 
+		if issue.GetState() != "closed" {
+			log.Println("Issue", fix, "is not closed; not marking")
+			continue
+		}
 		if issue.Milestone != nil {
 			if issue.Milestone.GetNumber() == stone.GetNumber() {
 				// It's already correctly set
