@@ -203,21 +203,38 @@ nextIssue:
 	if markdownLinks {
 		fmt.Fprintf(w, "# [%s](https://github.com/%s/%s/releases/%s)\n\n", milestone, owner, repo, milestone)
 	} else {
-		fmt.Fprintf(w, "# %s\n\n", milestone)
+		fmt.Fprintf(w, "%s\n\n", milestone)
+	}
+
+	if descr := stone.GetDescription(); descr != "" {
+		descr := wrap(strings.TrimSpace(descr), 72)
+		fmt.Fprintf(w, "%s\n\n", descr)
 	}
 
 	if len(bugs) > 0 {
-		fmt.Fprintf(w, "## Bugfixes\n\n")
+		if markdownLinks {
+			fmt.Fprintf(w, "## Bugfixes\n\n")
+		} else {
+			fmt.Fprintf(w, "Bugfixes:\n\n")
+		}
 		printIssues(w, bugs, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
 	if len(enhancements) > 0 {
-		fmt.Fprintf(w, "## Enhancements\n\n")
+		if markdownLinks {
+			fmt.Fprintf(w, "## Enhancements\n\n")
+		} else {
+			fmt.Fprintf(w, "Enhancements:\n\n")
+		}
 		printIssues(w, enhancements, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
 	if len(other) > 0 {
-		fmt.Fprintf(w, "## Other issues\n\n")
+		if markdownLinks {
+			fmt.Fprintf(w, "## Other issues\n\n")
+		} else {
+			fmt.Fprintf(w, "Other issues:\n\n")
+		}
 		printIssues(w, other, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
@@ -256,9 +273,9 @@ func createRelease(ctx context.Context, client *github.Client, owner, repo, mile
 func printIssues(w io.Writer, issues []*github.Issue, markdownLinks bool) {
 	for _, issue := range issues {
 		if markdownLinks {
-			fmt.Fprintf(w, " - [#%d](%s): %s\n", issue.GetNumber(), issue.GetHTMLURL(), issue.GetTitle())
+			fmt.Fprintf(w, "- [#%d](%s): %s\n", issue.GetNumber(), issue.GetHTMLURL(), issue.GetTitle())
 		} else {
-			fmt.Fprintf(w, " - #%d: %s\n", issue.GetNumber(), issue.GetTitle())
+			fmt.Fprintf(w, "- #%d: %s\n", issue.GetNumber(), issue.GetTitle())
 		}
 	}
 }
@@ -352,4 +369,47 @@ func getMilestone(ctx context.Context, client *github.Client, owner, repo, name 
 	}
 
 	return nil, errors.New("not found")
+}
+
+func wrap(s string, w int) string {
+	var b strings.Builder
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteRune('\n')
+		}
+		b.WriteString(wrapParagraph(line, w))
+	}
+	return b.String()
+}
+
+func wrapParagraph(s string, w int) string {
+	var b strings.Builder
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return ""
+	}
+
+	pref1 := ""
+	switch words[0] {
+	case "-", "*":
+		pref1 = "  "
+	}
+
+	l := 0
+	for _, word := range words {
+		if l > 0 {
+			b.WriteRune(' ')
+			l++
+		}
+		if l+len(word) > w {
+			b.WriteRune('\n')
+			l = 0
+			b.WriteString(pref1)
+			l += len(pref1)
+		}
+		b.WriteString(word)
+		l += len(word)
+	}
+	return b.String()
 }
