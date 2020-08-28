@@ -71,11 +71,11 @@ func main() {
 		createMilestone(ctx, client, owner, repo, since, to, milestone, forceMilestone)
 
 	case cmdChangelog.FullCommand():
-		changelog(ctx, os.Stdout, client, owner, repo, milestone, markdownLinks, skipLabels)
+		changelog(ctx, os.Stdout, client, owner, repo, milestone, markdownLinks, skipLabels, true)
 
 	case cmdRelease.FullCommand():
 		buf := new(bytes.Buffer)
-		changelog(ctx, buf, client, owner, repo, milestone, false, skipLabels)
+		changelog(ctx, buf, client, owner, repo, milestone, false, skipLabels, false)
 
 		releaseName := milestone
 		close := true
@@ -147,7 +147,7 @@ func createMilestone(ctx context.Context, client *github.Client, owner, repo, si
 	}
 }
 
-func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, repo, milestone string, markdownLinks bool, skipLabels []string) {
+func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, repo, milestone string, markdownLinks bool, skipLabels []string, withSubject bool) {
 	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
 		log.Println("Getting milestone:", err)
@@ -200,10 +200,12 @@ nextIssue:
 		}
 	}
 
-	if markdownLinks {
-		fmt.Fprintf(w, "# [%s](https://github.com/%s/%s/releases/%s)\n\n", milestone, owner, repo, milestone)
-	} else {
-		fmt.Fprintf(w, "%s\n\n", milestone)
+	if withSubject {
+		if markdownLinks {
+			fmt.Fprintf(w, "# [%s](https://github.com/%s/%s/releases/%s)\n\n", milestone, owner, repo, milestone)
+		} else {
+			fmt.Fprintf(w, "%s\n\n", milestone)
+		}
 	}
 
 	if descr := stone.GetDescription(); descr != "" {
