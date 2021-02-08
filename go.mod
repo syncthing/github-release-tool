@@ -1,4 +1,4 @@
-module github.com/calmh/grt
+module github.com/syncthing/github-release-tool
 
 require (
 	github.com/alecthomas/kingpin v2.2.6+incompatible
