@@ -43,21 +43,21 @@ type skipLabelFlag struct {
 	SkipLabels []string `placeholder:"LABEL" env:"GRT_SKIPLABELS" help:"Issue labels to skip"`
 }
 
-type milestoneArg struct {
-	Milestone string `arg="" required help:"The milestone name"`
+type releaseArg struct {
+	Release string `arg:"" required:"" help:"The release name"`
 }
 
 type milestoneOptions struct {
 	dryRunFlag
-	milestoneArg
-	From  string `placeholder:"TAG/COMMIT" help:"Start tag/commit"`
-	To    string `placeholder:"TAG/COMMIT" default:"HEAD" help:"End tag/commit"`
-	Force bool   `help:"Overwrite milestone on already milestoned issues"`
+	From      string `placeholder:"TAG/COMMIT" help:"Start tag/commit"`
+	To        string `placeholder:"TAG/COMMIT" default:"HEAD" help:"End tag/commit"`
+	Force     bool   `help:"Overwrite milestone on already milestoned issues"`
+	Milestone string `arg:"" required:"" help:"The milestone name"`
 }
 
 type changelogOptions struct {
 	skipLabelFlag
-	milestoneArg
+	releaseArg
 	Md        bool   `help:"Markdown links"`
 	SkipLabel string `placeholder:"LABEL" env:"GRT_SKIPLABELS" help:"Issue labels to skip"`
 }
@@ -65,8 +65,7 @@ type changelogOptions struct {
 type releaseOptions struct {
 	dryRunFlag
 	skipLabelFlag
-	milestoneArg
-	To string `placeholder:"NAME" help:"Release name/version (default is milestone name)"`
+	releaseArg
 }
 
 func main() {
@@ -93,24 +92,16 @@ func (o *milestoneOptions) Run(common *commonOptions) error {
 }
 
 func (o changelogOptions) Run(common *commonOptions) error {
-	changelog(common.ctx, os.Stdout, common.client, common.Owner, common.Repo, o.Milestone, o.Md, o.SkipLabels, true)
-	return nil
+	return changelog(common.ctx, os.Stdout, common.client, common.Owner, common.Repo, o.Release, o.Md, o.SkipLabels, true)
+
 }
 
 func (o releaseOptions) Run(common *commonOptions) error {
 	buf := new(bytes.Buffer)
-	changelog(common.ctx, buf, common.client, common.Owner, common.Repo, o.Milestone, false, o.SkipLabels, false)
-
-	releaseName := o.Milestone
-	close := true
-	pre := false
-	if o.To != "" {
-		releaseName = o.To
-		close = false
-		pre = true
+	if err := changelog(common.ctx, buf, common.client, common.Owner, common.Repo, o.Release, false, o.SkipLabels, false); err != nil {
+		return err
 	}
-	createRelease(common.ctx, common.client, common.Owner, common.Repo, o.Milestone, releaseName, close, pre, buf.String())
-	return nil
+	return createRelease(common.ctx, common.client, common.Owner, common.Repo, o.Release, buf.String())
 }
 
 func createMilestone(ctx context.Context, client *github.Client, owner, repo, since, to, milestone string, force, dryRun bool) error {
@@ -170,7 +161,9 @@ func createMilestone(ctx context.Context, client *github.Client, owner, repo, si
 	return nil
 }
 
-func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, repo, milestone string, markdownLinks bool, skipLabels []string, withSubject bool) error {
+func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, repo, release string, markdownLinks bool, skipLabels []string, withSubject bool) error {
+	milestone := strings.SplitN(release, "-", 2)[0]
+
 	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
 		return fmt.Errorf("getting milestone: %w", err)
@@ -223,9 +216,9 @@ nextIssue:
 
 	if withSubject {
 		if markdownLinks {
-			fmt.Fprintf(w, "# [%s](https://github.com/%s/%s/releases/%s)\n\n", milestone, owner, repo, milestone)
+			fmt.Fprintf(w, "# [%s](https://github.com/%s/%s/releases/%s)\n\n", release, owner, repo, release)
 		} else {
-			fmt.Fprintf(w, "%s\n\n", milestone)
+			fmt.Fprintf(w, "%s\n\n", release)
 		}
 	}
 
@@ -264,15 +257,19 @@ nextIssue:
 	return nil
 }
 
-func createRelease(ctx context.Context, client *github.Client, owner, repo, milestone, name string, close, pre bool, changelog string) error {
+func createRelease(ctx context.Context, client *github.Client, owner, repo, release string, changelog string) error {
+	splits := strings.SplitN(release, "-", 2)
+	milestone := splits[0]
+	pre := release != milestone
+
 	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
 		return fmt.Errorf("getting milestone: %w", err)
 	}
 
 	rel := &github.RepositoryRelease{
-		Name:       github.String(name),
-		TagName:    github.String(name),
+		Name:       github.String(release),
+		TagName:    github.String(release),
 		Body:       github.String(changelog),
 		Prerelease: github.Bool(pre),
 		Draft:      github.Bool(false),
@@ -281,12 +278,12 @@ func createRelease(ctx context.Context, client *github.Client, owner, repo, mile
 		return err
 	}
 
-	if close {
+	if !pre { // Close milestone
 		_, _, err := client.Issues.EditMilestone(ctx, owner, repo, stone.GetNumber(), &github.Milestone{
 			State: github.String("closed"),
 		})
 		if err != nil {
-			return fmt.Errorf("closing milestone: %w", err)
+			return fmt.Errorf("closing milestone: %w")
 		}
 	}
 	return nil
