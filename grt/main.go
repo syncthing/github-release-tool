@@ -14,82 +14,106 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/alecthomas/kingpin"
+	"github.com/alecthomas/kong"
 	"github.com/google/go-github/github"
 	"golang.org/x/oauth2"
 )
 
-var dryRun = false
+type cliOptions struct {
+	commonOptions
+
+	Milestone milestoneOptions `cmd:"" help:"Collect resolved issues into milestone"`
+	Changelog changelogOptions `cmd:"" help:"Show changelog for milestone"`
+	Release   releaseOptions   `cmd:"" help:"Create release from milestone"`
+}
+
+type commonOptions struct {
+	Owner string `required:"" env:"GRT_OWNER" help:"Owner name"`
+	Repo  string `required:"" env:"GRT_REPO" help:"Repository name"`
+
+	ctx    context.Context
+	client *github.Client
+}
+
+type dryRunFlag struct {
+	DryRun bool `help:"Don't do it, just report what would be done"`
+}
+
+type skipLabelFlag struct {
+	SkipLabels []string `placeholder:"LABEL" env:"GRT_SKIPLABELS" help:"Issue labels to skip"`
+}
+
+type milestoneArg struct {
+	Milestone string `arg="" required help:"The milestone name"`
+}
+
+type milestoneOptions struct {
+	dryRunFlag
+	milestoneArg
+	From  string `placeholder:"TAG/COMMIT" help:"Start tag/commit"`
+	To    string `placeholder:"TAG/COMMIT" default:"HEAD" help:"End tag/commit"`
+	Force bool   `help:"Overwrite milestone on already milestoned issues"`
+}
+
+type changelogOptions struct {
+	skipLabelFlag
+	milestoneArg
+	Md        bool   `help:"Markdown links"`
+	SkipLabel string `placeholder:"LABEL" env:"GRT_SKIPLABELS" help:"Issue labels to skip"`
+}
+
+type releaseOptions struct {
+	dryRunFlag
+	skipLabelFlag
+	milestoneArg
+	To string `placeholder:"NAME" help:"Release name/version (default is milestone name)"`
+}
 
 func main() {
 	// log is used for error messages only. Normal messages go to stdout via
 	// package fmt.
 	log.SetFlags(log.Lshortfile)
 
-	// Set up commands.
-	var repo, owner string
-	var since, to string
-	var skipLabels []string
-	var markdownLinks bool
-	var milestone string
-	var forceMilestone bool
-
-	kingpin.Flag("owner", "Owner name (or set GRT_OWNER)").Envar("GRT_OWNER").Required().StringVar(&owner)
-	kingpin.Flag("repo", "Repository name (or set GRT_REPO)").Envar("GRT_REPO").Required().StringVar(&repo)
-
-	cmdMilestone := kingpin.Command("milestone", "Collect resolved issues into milestone")
-	cmdMilestone.Flag("dry-run", "Don't do it, just report what would be done").BoolVar(&dryRun)
-	cmdMilestone.Flag("from", "Start tag/commit").PlaceHolder("TAG/COMMIT").Required().StringVar(&since)
-	cmdMilestone.Flag("to", "End tag/commit").Default("HEAD").StringVar(&to)
-	cmdMilestone.Flag("force", "Overwrite milestone on already milestoned issues").BoolVar(&forceMilestone)
-	cmdMilestone.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
-
-	cmdChangelog := kingpin.Command("changelog", "Show changelog for milestone")
-	cmdChangelog.Flag("md", "Markdown links").BoolVar(&markdownLinks)
-	cmdChangelog.Flag("skip-label", "Issue labels to skip").PlaceHolder("LABEL").Envar("GRT_SKIPLABELS").StringsVar(&skipLabels)
-	cmdChangelog.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
-
-	cmdRelease := kingpin.Command("release", "Create release from milestone")
-	cmdRelease.Flag("dry-run", "Don't do it, just report what would be done").BoolVar(&dryRun)
-	cmdRelease.Flag("to", "Release name/version (default is milestone name)").PlaceHolder("NAME").StringVar(&to)
-	cmdRelease.Flag("skip-label", "Issue labels to skip").PlaceHolder("LABEL").Envar("GRT_SKIPLABELS").StringsVar(&skipLabels)
-	cmdRelease.Arg("milestone", "The milestone name").Required().StringVar(&milestone)
-
-	cmd := kingpin.Parse()
+	var cli cliOptions
 
 	// Initialize a client, with or without authentication.
-	ctx := context.Background()
+	cli.ctx = context.Background()
 	var tc *http.Client
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		tc = oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
+		tc = oauth2.NewClient(cli.ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token}))
 	}
-	client := github.NewClient(tc)
+	cli.client = github.NewClient(tc)
 
-	// Engage!
-	switch cmd {
-	case cmdMilestone.FullCommand():
-		createMilestone(ctx, client, owner, repo, since, to, milestone, forceMilestone)
-
-	case cmdChangelog.FullCommand():
-		changelog(ctx, os.Stdout, client, owner, repo, milestone, markdownLinks, skipLabels, true)
-
-	case cmdRelease.FullCommand():
-		buf := new(bytes.Buffer)
-		changelog(ctx, buf, client, owner, repo, milestone, false, skipLabels, false)
-
-		releaseName := milestone
-		close := true
-		pre := false
-		if to != "" {
-			releaseName = to
-			close = false
-			pre = true
-		}
-		createRelease(ctx, client, owner, repo, milestone, releaseName, close, pre, buf.String())
-	}
+	cmd := kong.Parse(&cli)
+	cmd.FatalIfErrorf(cmd.Run(&cli.commonOptions))
 }
 
-func createMilestone(ctx context.Context, client *github.Client, owner, repo, since, to, milestone string, force bool) {
+func (o *milestoneOptions) Run(common *commonOptions) error {
+	return createMilestone(common.ctx, common.client, common.Owner, common.Repo, o.From, o.To, o.Milestone, o.Force, o.DryRun)
+}
+
+func (o changelogOptions) Run(common *commonOptions) error {
+	changelog(common.ctx, os.Stdout, common.client, common.Owner, common.Repo, o.Milestone, o.Md, o.SkipLabels, true)
+	return nil
+}
+
+func (o releaseOptions) Run(common *commonOptions) error {
+	buf := new(bytes.Buffer)
+	changelog(common.ctx, buf, common.client, common.Owner, common.Repo, o.Milestone, false, o.SkipLabels, false)
+
+	releaseName := o.Milestone
+	close := true
+	pre := false
+	if o.To != "" {
+		releaseName = o.To
+		close = false
+		pre = true
+	}
+	createRelease(common.ctx, common.client, common.Owner, common.Repo, o.Milestone, releaseName, close, pre, buf.String())
+	return nil
+}
+
+func createMilestone(ctx context.Context, client *github.Client, owner, repo, since, to, milestone string, force, dryRun bool) error {
 	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
 		log.Println("Creating milestone", milestone)
@@ -99,16 +123,14 @@ func createMilestone(ctx context.Context, client *github.Client, owner, repo, si
 			}
 			stone, _, err = client.Issues.CreateMilestone(ctx, owner, repo, stone)
 			if err != nil {
-				log.Println("Creating milestone:", err)
-				os.Exit(1)
+				return err
 			}
 		}
 	}
 
 	commits, err := listCommits(ctx, client, owner, repo, since, to)
 	if err != nil {
-		log.Println("Listing commits:", err)
-		os.Exit(1)
+		return fmt.Errorf("listing commits: %w", err)
 	}
 
 	for _, fix := range getFixes(commits) {
@@ -145,13 +167,13 @@ func createMilestone(ctx context.Context, client *github.Client, owner, repo, si
 			}
 		}
 	}
+	return nil
 }
 
-func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, repo, milestone string, markdownLinks bool, skipLabels []string, withSubject bool) {
+func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, repo, milestone string, markdownLinks bool, skipLabels []string, withSubject bool) error {
 	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
-		log.Println("Getting milestone:", err)
-		os.Exit(1)
+		return fmt.Errorf("getting milestone: %w", err)
 	}
 
 	opts := &github.IssueListByRepoOptions{
@@ -162,8 +184,7 @@ func changelog(ctx context.Context, w io.Writer, client *github.Client, owner, r
 	for {
 		is, resp, err := client.Issues.ListByRepo(ctx, owner, repo, opts)
 		if err != nil {
-			log.Println("Listing issues:", err)
-			os.Exit(1)
+			return fmt.Errorf("listing issues: %w", err)
 		}
 		issues = append(issues, is...)
 		if resp.NextPage <= opts.Page {
@@ -240,13 +261,13 @@ nextIssue:
 		printIssues(w, other, markdownLinks)
 		fmt.Fprintf(w, "\n")
 	}
+	return nil
 }
 
-func createRelease(ctx context.Context, client *github.Client, owner, repo, milestone, name string, close, pre bool, changelog string) {
+func createRelease(ctx context.Context, client *github.Client, owner, repo, milestone, name string, close, pre bool, changelog string) error {
 	stone, err := getMilestone(ctx, client, owner, repo, milestone)
 	if err != nil {
-		log.Println("Getting milestone:", err)
-		os.Exit(1)
+		return fmt.Errorf("getting milestone: %w", err)
 	}
 
 	rel := &github.RepositoryRelease{
@@ -257,8 +278,7 @@ func createRelease(ctx context.Context, client *github.Client, owner, repo, mile
 		Draft:      github.Bool(false),
 	}
 	if _, _, err := client.Repositories.CreateRelease(ctx, owner, repo, rel); err != nil {
-		log.Println("Creating release:", err)
-		os.Exit(1)
+		return err
 	}
 
 	if close {
@@ -266,10 +286,10 @@ func createRelease(ctx context.Context, client *github.Client, owner, repo, mile
 			State: github.String("closed"),
 		})
 		if err != nil {
-			fmt.Println("Closing milestone:", err)
-			os.Exit(1)
+			return fmt.Errorf("closing milestone: %w", err)
 		}
 	}
+	return nil
 }
 
 func printIssues(w io.Writer, issues []*github.Issue, markdownLinks bool) {
