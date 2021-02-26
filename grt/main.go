@@ -101,7 +101,7 @@ func (o releaseOptions) Run(common *commonOptions) error {
 	if err := changelog(common.ctx, buf, common.client, common.Owner, common.Repo, o.Release, false, o.SkipLabels, false); err != nil {
 		return err
 	}
-	return createRelease(common.ctx, common.client, common.Owner, common.Repo, o.Release, buf.String())
+	return createRelease(common.ctx, common.client, common.Owner, common.Repo, o.Release, buf.String(), o.DryRun)
 }
 
 func createMilestone(ctx context.Context, client *github.Client, owner, repo, since, to, milestone string, force, dryRun bool) error {
@@ -257,7 +257,7 @@ nextIssue:
 	return nil
 }
 
-func createRelease(ctx context.Context, client *github.Client, owner, repo, release string, changelog string) error {
+func createRelease(ctx context.Context, client *github.Client, owner, repo, release string, changelog string, dryRun bool) error {
 	splits := strings.SplitN(release, "-", 2)
 	milestone := splits[0]
 	pre := release != milestone
@@ -267,23 +267,29 @@ func createRelease(ctx context.Context, client *github.Client, owner, repo, rele
 		return fmt.Errorf("getting milestone: %w", err)
 	}
 
-	rel := &github.RepositoryRelease{
-		Name:       github.String(release),
-		TagName:    github.String(release),
-		Body:       github.String(changelog),
-		Prerelease: github.Bool(pre),
-		Draft:      github.Bool(false),
-	}
-	if _, _, err := client.Repositories.CreateRelease(ctx, owner, repo, rel); err != nil {
-		return err
+	log.Println("Creating release", release)
+	if !dryRun {
+		rel := &github.RepositoryRelease{
+			Name:       github.String(release),
+			TagName:    github.String(release),
+			Body:       github.String(changelog),
+			Prerelease: github.Bool(pre),
+			Draft:      github.Bool(false),
+		}
+		if _, _, err := client.Repositories.CreateRelease(ctx, owner, repo, rel); err != nil {
+			return err
+		}
 	}
 
 	if !pre { // Close milestone
-		_, _, err := client.Issues.EditMilestone(ctx, owner, repo, stone.GetNumber(), &github.Milestone{
-			State: github.String("closed"),
-		})
-		if err != nil {
-			return fmt.Errorf("closing milestone: %w")
+		log.Println("Closing milestone", milestone)
+		if !dryRun {
+			_, _, err := client.Issues.EditMilestone(ctx, owner, repo, stone.GetNumber(), &github.Milestone{
+				State: github.String("closed"),
+			})
+			if err != nil {
+				return fmt.Errorf("closing milestone: %w")
+			}
 		}
 	}
 	return nil
