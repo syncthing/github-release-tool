@@ -49,7 +49,7 @@ type releaseArg struct {
 
 type milestoneOptions struct {
 	dryRunFlag
-	From      string `placeholder:"TAG/COMMIT" help:"Start tag/commit"`
+	From      string `required:"" placeholder:"TAG/COMMIT" help:"Start tag/commit"`
 	To        string `placeholder:"TAG/COMMIT" default:"HEAD" help:"End tag/commit"`
 	Force     bool   `help:"Overwrite milestone on already milestoned issues"`
 	Milestone string `arg:"" required:"" help:"The milestone name"`
