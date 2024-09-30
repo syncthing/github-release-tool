@@ -25,6 +25,7 @@ type cliOptions struct {
 	Milestone milestoneOptions `cmd:"" help:"Collect resolved issues into milestone"`
 	Changelog changelogOptions `cmd:"" help:"Show changelog for milestone"`
 	Release   releaseOptions   `cmd:"" help:"Create release from milestone"`
+	Semver    semverCmd        `cmd:"" help:"Show latest tag"`
 }
 
 type commonOptions struct {
@@ -93,7 +94,6 @@ func (o *milestoneOptions) Run(common *commonOptions) error {
 
 func (o changelogOptions) Run(common *commonOptions) error {
 	return changelog(common.ctx, os.Stdout, common.client, common.Owner, common.Repo, o.Release, o.Md, o.SkipLabels, true)
-
 }
 
 func (o releaseOptions) Run(common *commonOptions) error {
@@ -288,7 +288,7 @@ func createRelease(ctx context.Context, client *github.Client, owner, repo, rele
 				State: github.String("closed"),
 			})
 			if err != nil {
-				return fmt.Errorf("closing milestone: %w")
+				return fmt.Errorf("closing milestone: %w", err)
 			}
 		}
 	}
