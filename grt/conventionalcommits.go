@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -23,10 +24,11 @@ func (c conventionalCommit) fix() bool {
 }
 
 func (c conventionalCommit) messageString() string {
+	sentenceDescr := strings.ToUpper(c.description[:1]) + c.description[1:]
 	if len(c.scopes) == 0 {
-		return c.description
+		return sentenceDescr
 	}
-	return strings.Join(c.scopes, ", ") + ": " + c.description
+	return fmt.Sprintf("_%s:_ %s", strings.Join(c.scopes, ", "), sentenceDescr)
 }
 
 func parseConventionalCommit(msg string) (conventionalCommit, bool) {
